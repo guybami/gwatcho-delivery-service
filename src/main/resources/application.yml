@@ -1,0 +1,61 @@
+
+spring:
+  application:
+    name: delivery-service
+
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      retries: 10
+    consumer:
+      group-id: delivery-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/delivery_db?createDatabaseIfNotExist=true&serverTimezone=Europe/Berlin
+    username: root
+    password: root4Web!
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+server:
+  port: 8084
+  servlet:
+    context-path: /delivery-service
+
+services:
+  product-service:
+    url: http://localhost:8083/product-service
+
+app:
+  kafka:
+    consumer:
+      group-id: delivery-service
+    topics:
+      payment-completed: payment.completed
+      delivery-completed: delivery.completed
+
+logging:
+  level:
+    org.hibernate.SQL: OFF
+    org.hibernate.orm.jdbc.bind: OFF
+    org.hibernate.orm.jdbc.extract: OFF
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
