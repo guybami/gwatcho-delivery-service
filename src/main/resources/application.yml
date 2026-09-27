@@ -30,6 +30,12 @@ spring:
       hibernate:
         format_sql: true
 
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8080/realms/gwatcho-shop
+
 server:
   port: 8084
   servlet:
