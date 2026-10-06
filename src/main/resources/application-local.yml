@@ -1,9 +1,81 @@
+
 spring:
+  application:
+    name: delivery-service
+
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+    producer:
+      acks: all
+      retries: 10
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+      properties:
+        spring.json.add.type.headers: false
+
+    consumer:
+      group-id: delivery-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+
+      properties:
+        spring.json.trusted.packages: com.gwatcho.paymentservice.event,com.gwatcho.deliveryservice.event
+        spring.json.value.default.type: com.gwatcho.deliveryservice.event.PaymentCompletedEvent
+        spring.json.use.type.headers: false
+
   datasource:
     url: jdbc:mysql://localhost:3306/delivery_db?createDatabaseIfNotExist=true&serverTimezone=Europe/Berlin
     username: root
     password: root4Web!
     driver-class-name: com.mysql.cj.jdbc.Driver
 
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8080/realms/gwatcho-shop
+          jwk-set-uri: http://localhost:8080/realms/gwatcho-shop/protocol/openid-connect/certs
+
+server:
+  port: 8084
+  servlet:
+    context-path: /delivery-service
+
+services:
+  product-service:
+    url: http://localhost:8083/product-service
+
+app:
   kafka:
-    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: delivery-service
+    topics:
+      payment-completed: payment.completed
+      delivery-completed: delivery.completed
+
+logging:
+  level:
+    org.hibernate.SQL: OFF
+    org.hibernate.orm.jdbc.bind: OFF
+    org.hibernate.orm.jdbc.extract: OFF
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+

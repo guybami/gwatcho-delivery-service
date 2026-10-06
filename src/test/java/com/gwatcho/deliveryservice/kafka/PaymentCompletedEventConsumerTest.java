@@ -1,5 +1,4 @@
-
-        package com.gwatcho.deliveryservice.kafka;
+package com.gwatcho.deliveryservice.kafka;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -7,15 +6,11 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gwatcho.deliveryservice.dto.DeliveryAddress;
 import com.gwatcho.deliveryservice.event.PaymentCompletedEvent;
 import com.gwatcho.deliveryservice.service.DeliveryService;
 import java.math.BigDecimal;
-import java.util.Map;
-
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,44 +22,16 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class PaymentCompletedEventConsumerTest {
     @Mock private DeliveryService deliveryService;
 
-    @Mock private KafkaConsumer<String, String> kafkaConsumer;
-
-    private ObjectMapper objectMapper;
-
     private PaymentCompletedEventConsumer consumer;
 
     private PaymentCompletedEvent event;
 
-    private String payload;
-
-    // =========================================================
-    // SETUP
-    // =========================================================
-
     @BeforeEach
-    void setUp() throws Exception {
-        objectMapper = new ObjectMapper().findAndRegisterModules();
+    void setUp() {
+        consumer = new PaymentCompletedEventConsumer(deliveryService);
 
-        consumer = new PaymentCompletedEventConsumer(deliveryService, objectMapper);
-
-        /*
-         * PaymentCompletedEventConsumer creates the native
-         * KafkaConsumer itself during start().
-         *
-         * For this unit test we inject a mocked KafkaConsumer
-         * so that processRecord() can be tested without Kafka.
-         */
-        var field = PaymentCompletedEventConsumer.class.getDeclaredField("kafkaConsumer");
-
-        field.setAccessible(true);
-
-        field.set(consumer, kafkaConsumer);
-
-        event = new PaymentCompletedEvent(10L, 100L, 200L,
-                new BigDecimal("2693.28"), "EUR", "TXN-123456",
+        event = new PaymentCompletedEvent(10L, 100L, 200L, new BigDecimal("2693.28"), "EUR", "TXN-123456",
                 new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
-
-        payload = objectMapper.writeValueAsString(event);
     }
 
     // =========================================================
@@ -73,24 +40,24 @@ class PaymentCompletedEventConsumerTest {
 
     @Test
     void shouldProcessValidPaymentCompletedEvent() {
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 0, 10L, "100", payload);
+        ConsumerRecord<String, PaymentCompletedEvent> record =
+                new ConsumerRecord<>("payment.completed", 0, 10L, "100", event);
 
-        consumer.processRecord(record);
+        consumer.consumePaymentCompleted(record);
 
         verify(deliveryService).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-
-        verify(kafkaConsumer).commitSync(any(Map.class));
     }
 
     // =========================================================
-    // DESERIALIZATION
+    // EVENT DATA
     // =========================================================
 
     @Test
-    void shouldDeserializePaymentCompletedEventCorrectly() {
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 0, 10L, "100", payload);
+    void shouldPassCorrectEventToDeliveryService() {
+        ConsumerRecord<String, PaymentCompletedEvent> record =
+                new ConsumerRecord<>("payment.completed", 0, 10L, "100", event);
 
-        consumer.processRecord(record);
+        consumer.consumePaymentCompleted(record);
 
         ArgumentCaptor<PaymentCompletedEvent> captor = ArgumentCaptor.forClass(PaymentCompletedEvent.class);
 
@@ -99,66 +66,30 @@ class PaymentCompletedEventConsumerTest {
         PaymentCompletedEvent result = captor.getValue();
 
         assertThat(result.paymentId()).isEqualTo(10L);
-
         assertThat(result.orderId()).isEqualTo(100L);
-
         assertThat(result.customerId()).isEqualTo(200L);
-
         assertThat(result.amount()).isEqualByComparingTo(new BigDecimal("2693.28"));
-
         assertThat(result.currency()).isEqualTo("EUR");
-
         assertThat(result.transactionId()).isEqualTo("TXN-123456");
     }
 
     // =========================================================
-    // OFFSET COMMIT
+    // DELIVERY SERVICE FAILURE
     // =========================================================
 
     @Test
-    void shouldCommitOffsetAfterSuccessfulProcessing() {
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 2, 50L, "100", payload);
-
-        consumer.processRecord(record);
-
-        verify(deliveryService).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-
-        verify(kafkaConsumer).commitSync(any(Map.class));
-    }
-
-    // =========================================================
-    // NO COMMIT WHEN SERVICE FAILS
-    // =========================================================
-
-    @Test
-    void shouldNotCommitOffsetWhenDeliveryServiceFails() {
+    void shouldPropagateDeliveryServiceFailure() {
         doThrow(new IllegalStateException("DeliveryService failure"))
                 .when(deliveryService)
                 .handlePaymentCompleted(any(PaymentCompletedEvent.class));
 
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 0, 10L, "100", payload);
+        ConsumerRecord<String, PaymentCompletedEvent> record =
+                new ConsumerRecord<>("payment.completed", 0, 10L, "100", event);
 
-        consumer.processRecord(record);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalStateException.class, () -> consumer.consumePaymentCompleted(record));
 
         verify(deliveryService).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-
-        verify(kafkaConsumer, never()).commitSync(any(Map.class));
-    }
-
-    // =========================================================
-    // INVALID JSON
-    // =========================================================
-
-    @Test
-    void shouldNotProcessInvalidJson() {
-        ConsumerRecord<String, String> record =
-                new ConsumerRecord<>("payment.completed", 0, 10L, "100", "{ invalid json }");
-
-        consumer.processRecord(record);
-
-        verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-
-        verify(kafkaConsumer, never()).commitSync(any(Map.class));
     }
 
     // =========================================================
@@ -166,20 +97,17 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutPaymentId() throws Exception {
-        PaymentCompletedEvent invalidEvent =
-                new PaymentCompletedEvent(null, 100L, 200L, new BigDecimal("2693.28"), "EUR",
-                        "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutPaymentId() {
+        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(null, 100L, 200L, new BigDecimal("2693.28"), "EUR",
+                "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
 
-        String invalidPayload = objectMapper.writeValueAsString(invalidEvent);
+        ConsumerRecord<String, PaymentCompletedEvent> record =
+                new ConsumerRecord<>("payment.completed", 0, 10L, "100", invalidEvent);
 
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 0, 10L, "100", invalidPayload);
-
-        consumer.processRecord(record);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
 
         verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-
-        verify(kafkaConsumer, never()).commitSync(any(Map.class));
     }
 
     // =========================================================
@@ -187,21 +115,17 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutOrderId() throws Exception {
-        PaymentCompletedEvent invalidEvent =
-                new PaymentCompletedEvent(10L, null, 200L,
-                        new BigDecimal("2693.28"), "EUR", "TXN-123456",
-                        new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutOrderId() {
+        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(10L, null, 200L, new BigDecimal("2693.28"), "EUR",
+                "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
 
-        String invalidPayload = objectMapper.writeValueAsString(invalidEvent);
+        ConsumerRecord<String, PaymentCompletedEvent> record =
+                new ConsumerRecord<>("payment.completed", 0, 11L, "100", invalidEvent);
 
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 0, 11L, "null", invalidPayload);
-
-        consumer.processRecord(record);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
 
         verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-
-        verify(kafkaConsumer, never()).commitSync(any(Map.class));
     }
 
     // =========================================================
@@ -209,21 +133,17 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutCustomerId() throws Exception {
-        PaymentCompletedEvent invalidEvent =
-                new PaymentCompletedEvent(10L, 100L, null,
-                        new BigDecimal("2693.28"), "EUR", "TXN-123456",
-                        new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutCustomerId() {
+        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(10L, 100L, null, new BigDecimal("2693.28"), "EUR",
+                "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
 
-        String invalidPayload = objectMapper.writeValueAsString(invalidEvent);
+        ConsumerRecord<String, PaymentCompletedEvent> record =
+                new ConsumerRecord<>("payment.completed", 0, 12L, "100", invalidEvent);
 
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 0, 12L, "100", invalidPayload);
-
-        consumer.processRecord(record);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
 
         verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-
-        verify(kafkaConsumer, never()).commitSync(any(Map.class));
     }
 
     // =========================================================
@@ -231,20 +151,17 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutAmount() throws Exception {
-        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(10L, 100L,
-                200L, null, "EUR", "TXN-123456",
-                new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutAmount() {
+        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(
+                10L, 100L, 200L, null, "EUR", "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
 
-        String invalidPayload = objectMapper.writeValueAsString(invalidEvent);
+        ConsumerRecord<String, PaymentCompletedEvent> record =
+                new ConsumerRecord<>("payment.completed", 0, 13L, "100", invalidEvent);
 
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 0, 13L, "100", invalidPayload);
-
-        consumer.processRecord(record);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
 
         verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-
-        verify(kafkaConsumer, never()).commitSync(any(Map.class));
     }
 
     // =========================================================
@@ -252,21 +169,17 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutCurrency() throws Exception {
-        PaymentCompletedEvent invalidEvent =
-                new PaymentCompletedEvent(10L, 100L, 200L,
-                        new BigDecimal("2693.28"), "", "TXN-123456",
-                        new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutCurrency() {
+        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(10L, 100L, 200L, new BigDecimal("2693.28"), "",
+                "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
 
-        String invalidPayload = objectMapper.writeValueAsString(invalidEvent);
+        ConsumerRecord<String, PaymentCompletedEvent> record =
+                new ConsumerRecord<>("payment.completed", 0, 14L, "100", invalidEvent);
 
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 0, 14L, "100", invalidPayload);
-
-        consumer.processRecord(record);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
 
         verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-
-        verify(kafkaConsumer, never()).commitSync(any(Map.class));
     }
 
     // =========================================================
@@ -274,45 +187,31 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutTransactionId() throws Exception {
-        PaymentCompletedEvent invalidEvent =
-                new PaymentCompletedEvent(10L, 100L, 200L,
-                        new BigDecimal("2693.28"), "EUR", null,
-                        new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutTransactionId() {
+        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(10L, 100L, 200L, new BigDecimal("2693.28"), "EUR",
+                null, new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
 
-        String invalidPayload = objectMapper.writeValueAsString(invalidEvent);
+        ConsumerRecord<String, PaymentCompletedEvent> record =
+                new ConsumerRecord<>("payment.completed", 0, 15L, "100", invalidEvent);
 
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 0, 15L, "100", invalidPayload);
-
-        consumer.processRecord(record);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
 
         verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-
-        verify(kafkaConsumer, never()).commitSync(any(Map.class));
     }
 
     // =========================================================
-    // CORRECT OFFSET
+    // NULL EVENT
     // =========================================================
 
     @Test
-    void shouldCommitNextOffset() {
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment.completed", 3, 99L, "100", payload);
+    void shouldRejectNullEvent() {
+        ConsumerRecord<String, PaymentCompletedEvent> record =
+                new ConsumerRecord<>("payment.completed", 0, 20L, "100", null);
 
-        consumer.processRecord(record);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
 
-        ArgumentCaptor<java.util.Map<org.apache.kafka.common.TopicPartition,
-                org.apache.kafka.clients.consumer.OffsetAndMetadata>> captor = ArgumentCaptor.forClass(java.util.Map.class);
-
-        verify(kafkaConsumer).commitSync(captor.capture());
-
-        var committed = captor.getValue();
-
-        var partition = new org.apache.kafka.common.TopicPartition("payment.completed", 3);
-
-        assertThat(committed.get(partition)).isNotNull();
-
-        assertThat(committed.get(partition).offset()).isEqualTo(100L);
+        verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
     }
 }
-

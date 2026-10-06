@@ -6,15 +6,28 @@ spring:
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
     producer:
       acks: all
       retries: 10
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+      properties:
+        spring.json.add.type.headers: false
+
     consumer:
       group-id: delivery-service
       auto-offset-reset: earliest
       enable-auto-commit: false
+
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+
+      properties:
+        spring.json.trusted.packages: com.gwatcho.paymentservice.event,com.gwatcho.deliveryservice.event
+        spring.json.value.default.type: com.gwatcho.deliveryservice.event.PaymentCompletedEvent
+        spring.json.use.type.headers: false
 
   datasource:
     url: jdbc:mysql://localhost:3306/delivery_db?createDatabaseIfNotExist=true&serverTimezone=Europe/Berlin
@@ -35,6 +48,7 @@ spring:
       resourceserver:
         jwt:
           issuer-uri: http://localhost:8080/realms/gwatcho-shop
+          jwk-set-uri: http://localhost:8080/realms/gwatcho-shop/protocol/openid-connect/certs
 
 server:
   port: 8084

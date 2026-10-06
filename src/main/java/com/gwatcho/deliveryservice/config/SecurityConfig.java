@@ -31,22 +31,5 @@ public class SecurityConfig {
         return http.build();
     }
 
-    @Bean
-    JwtDecoder jwtDecoder() {
 
-        NimbusJwtDecoder decoder = NimbusJwtDecoder
-                .withJwkSetUri(
-                        "http://keycloak:8080/realms/gwatcho-shop/protocol/openid-connect/certs"
-                )
-                .build();
-
-        OAuth2TokenValidator<Jwt> issuerValidator =
-                JwtValidators.createDefaultWithIssuer(
-                        "http://localhost:8080/realms/gwatcho-shop"
-                );
-
-        decoder.setJwtValidator(issuerValidator);
-
-        return decoder;
-    }
 }
