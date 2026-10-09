@@ -17,7 +17,7 @@ spring:
         spring.json.add.type.headers: false
 
     consumer:
-      group-id: delivery-service
+      group-id: delivery-service-integration-test
       auto-offset-reset: earliest
       enable-auto-commit: false
 
@@ -62,7 +62,7 @@ services:
 app:
   kafka:
     consumer:
-      group-id: delivery-service
+      group-id: delivery-service-integration-test
     topics:
       payment-completed: payment.completed
       delivery-completed: delivery.completed
