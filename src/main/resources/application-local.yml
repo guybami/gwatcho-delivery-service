@@ -11,7 +11,7 @@ spring:
       acks: all
       retries: 10
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonDeserializer
 
       properties:
         spring.json.add.type.headers: false
@@ -66,6 +66,7 @@ app:
     topics:
       payment-completed: payment.completed
       delivery-completed: delivery.completed
+      order-created: order.created
 
 logging:
   level:

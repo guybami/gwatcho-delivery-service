@@ -19,7 +19,7 @@ public class Delivery {
     @Column(name = "order_id", nullable = false, unique = true)
     private Long orderId;
 
-    @Column(name = "payment_id", nullable = false)
+    @Column(name = "payment_id", nullable = true)
     private Long paymentId;
 
     @Column(name = "customer_id", nullable = false)

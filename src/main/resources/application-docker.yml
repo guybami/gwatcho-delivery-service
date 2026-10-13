@@ -15,7 +15,7 @@ spring:
       acks: all
       retries: 10
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonDeserializer
 
       properties:
         spring.json.add.type.headers: false
@@ -36,8 +36,8 @@ spring:
 
   datasource:
     url: jdbc:mysql://delivery-db:3306/delivery_db?createDatabaseIfNotExist=true&serverTimezone=Europe/Berlin
-    username: root
-    password: root
+    username: delivery_user
+    password: ${MYSQL_DELIVERY_PASSWORD:delivery_password}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
@@ -59,7 +59,7 @@ spring:
 
 services:
   product-service:
-    url: http://localhost:8083/product-service
+    url: http://product-service:8080/product-service
 
 app:
   kafka:
@@ -68,6 +68,7 @@ app:
     topics:
       payment-completed: payment.completed
       delivery-completed: delivery.completed
+      order-created: order.created
 
 logging:
   level:

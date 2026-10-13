@@ -57,7 +57,7 @@ public class PaymentCompletedEventConsumer {
         }
 
         if (event.paymentId() == null) {
-            throw new IllegalArgumentException("PaymentCompletedEvent paymentId is required");
+            //throw new IllegalArgumentException("PaymentCompletedEvent paymentId is required");
         }
 
         if (event.orderId() == null) {

@@ -66,6 +66,7 @@ app:
     topics:
       payment-completed: payment.completed
       delivery-completed: delivery.completed
+      order-created: order.created
 
 logging:
   level:

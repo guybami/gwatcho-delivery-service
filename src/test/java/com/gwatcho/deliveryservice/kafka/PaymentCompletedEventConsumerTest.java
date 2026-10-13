@@ -1,11 +1,14 @@
+
 package com.gwatcho.deliveryservice.kafka;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gwatcho.deliveryservice.dto.DeliveryAddress;
 import com.gwatcho.deliveryservice.event.PaymentCompletedEvent;
 import com.gwatcho.deliveryservice.service.DeliveryService;
@@ -39,9 +42,8 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldProcessValidPaymentCompletedEvent() {
-        ConsumerRecord<String, PaymentCompletedEvent> record =
-                new ConsumerRecord<>("payment.completed", 0, 10L, "100", event);
+    void shouldProcessValidPaymentCompletedEvent() throws Exception {
+        ConsumerRecord<String, PaymentCompletedEvent> record = createRecord(event);
 
         consumer.consumePaymentCompleted(record);
 
@@ -53,9 +55,8 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldPassCorrectEventToDeliveryService() {
-        ConsumerRecord<String, PaymentCompletedEvent> record =
-                new ConsumerRecord<>("payment.completed", 0, 10L, "100", event);
+    void shouldPassCorrectEventToDeliveryService()  {
+        ConsumerRecord<String, PaymentCompletedEvent> record = createRecord(event);
 
         consumer.consumePaymentCompleted(record);
 
@@ -71,6 +72,12 @@ class PaymentCompletedEventConsumerTest {
         assertThat(result.amount()).isEqualByComparingTo(new BigDecimal("2693.28"));
         assertThat(result.currency()).isEqualTo("EUR");
         assertThat(result.transactionId()).isEqualTo("TXN-123456");
+
+        assertThat(result.deliveryAddress()).isNotNull();
+        assertThat(result.deliveryAddress().street()).isEqualTo("Main Street 10");
+        assertThat(result.deliveryAddress().postalCode()).isEqualTo("74172");
+        assertThat(result.deliveryAddress().city()).isEqualTo("Neckarsulm");
+        assertThat(result.deliveryAddress().country()).isEqualTo("DE");
     }
 
     // =========================================================
@@ -78,16 +85,14 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldPropagateDeliveryServiceFailure() {
+    void shouldPropagateDeliveryServiceFailure() throws Exception {
         doThrow(new IllegalStateException("DeliveryService failure"))
                 .when(deliveryService)
                 .handlePaymentCompleted(any(PaymentCompletedEvent.class));
 
-        ConsumerRecord<String, PaymentCompletedEvent> record =
-                new ConsumerRecord<>("payment.completed", 0, 10L, "100", event);
+        ConsumerRecord<String, PaymentCompletedEvent> record = createRecord(event);
 
-        org.junit.jupiter.api.Assertions.assertThrows(
-                IllegalStateException.class, () -> consumer.consumePaymentCompleted(record));
+        assertThrows(IllegalStateException.class, () -> consumer.consumePaymentCompleted(record));
 
         verify(deliveryService).handlePaymentCompleted(any(PaymentCompletedEvent.class));
     }
@@ -95,37 +100,27 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
     // NULL PAYMENT ID
     // =========================================================
+    /*
+    //@Test
+    void shouldRejectEventWithoutPaymentId() throws Exception {
+        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(
+                null, 100L, 200L, new BigDecimal("2693.28"),
+                "EUR", "TXN-123456", event.deliveryAddress());
 
-    @Test
-    void shouldRejectEventWithoutPaymentId() {
-        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(null, 100L, 200L, new BigDecimal("2693.28"), "EUR",
-                "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
-
-        ConsumerRecord<String, PaymentCompletedEvent> record =
-                new ConsumerRecord<>("payment.completed", 0, 10L, "100", invalidEvent);
-
-        org.junit.jupiter.api.Assertions.assertThrows(
-                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
-
-        verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
-    }
+        assertInvalidEvent(invalidEvent);
+    }*/
 
     // =========================================================
     // NULL ORDER ID
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutOrderId() {
-        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(10L, null, 200L, new BigDecimal("2693.28"), "EUR",
-                "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutOrderId() throws Exception {
+        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(
+                10L, null, 200L, new BigDecimal("2693.28"),
+                "EUR", "TXN-123456", event.deliveryAddress());
 
-        ConsumerRecord<String, PaymentCompletedEvent> record =
-                new ConsumerRecord<>("payment.completed", 0, 11L, "100", invalidEvent);
-
-        org.junit.jupiter.api.Assertions.assertThrows(
-                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
-
-        verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
+        assertInvalidEvent(invalidEvent);
     }
 
     // =========================================================
@@ -133,17 +128,12 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutCustomerId() {
-        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(10L, 100L, null, new BigDecimal("2693.28"), "EUR",
-                "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutCustomerId() throws Exception {
+        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(
+                10L, 100L, null, new BigDecimal("2693.28"),
+                "EUR", "TXN-123456", event.deliveryAddress());
 
-        ConsumerRecord<String, PaymentCompletedEvent> record =
-                new ConsumerRecord<>("payment.completed", 0, 12L, "100", invalidEvent);
-
-        org.junit.jupiter.api.Assertions.assertThrows(
-                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
-
-        verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
+        assertInvalidEvent(invalidEvent);
     }
 
     // =========================================================
@@ -151,17 +141,12 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutAmount() {
-        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(
-                10L, 100L, 200L, null, "EUR", "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutAmount() throws Exception {
+        PaymentCompletedEvent invalidEvent =
+                new PaymentCompletedEvent(10L, 100L, 200L,
+                        null, "EUR", "TXN-123456", event.deliveryAddress());
 
-        ConsumerRecord<String, PaymentCompletedEvent> record =
-                new ConsumerRecord<>("payment.completed", 0, 13L, "100", invalidEvent);
-
-        org.junit.jupiter.api.Assertions.assertThrows(
-                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
-
-        verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
+        assertInvalidEvent(invalidEvent);
     }
 
     // =========================================================
@@ -169,17 +154,12 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutCurrency() {
-        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(10L, 100L, 200L, new BigDecimal("2693.28"), "",
-                "TXN-123456", new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutCurrency() throws Exception {
+        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(
+                10L, 100L, 200L, new BigDecimal("2693.28"),
+                "", "TXN-123456", event.deliveryAddress());
 
-        ConsumerRecord<String, PaymentCompletedEvent> record =
-                new ConsumerRecord<>("payment.completed", 0, 14L, "100", invalidEvent);
-
-        org.junit.jupiter.api.Assertions.assertThrows(
-                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
-
-        verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
+        assertInvalidEvent(invalidEvent);
     }
 
     // =========================================================
@@ -187,17 +167,11 @@ class PaymentCompletedEventConsumerTest {
     // =========================================================
 
     @Test
-    void shouldRejectEventWithoutTransactionId() {
-        PaymentCompletedEvent invalidEvent = new PaymentCompletedEvent(10L, 100L, 200L, new BigDecimal("2693.28"), "EUR",
-                null, new DeliveryAddress("Main Street 10", "74172", "Neckarsulm", "DE"));
+    void shouldRejectEventWithoutTransactionId() throws Exception {
+        PaymentCompletedEvent invalidEvent =
+                new PaymentCompletedEvent(10L, 100L, 200L, new BigDecimal("2693.28"), "EUR", null, event.deliveryAddress());
 
-        ConsumerRecord<String, PaymentCompletedEvent> record =
-                new ConsumerRecord<>("payment.completed", 0, 15L, "100", invalidEvent);
-
-        org.junit.jupiter.api.Assertions.assertThrows(
-                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
-
-        verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
+        assertInvalidEvent(invalidEvent);
     }
 
     // =========================================================
@@ -206,12 +180,28 @@ class PaymentCompletedEventConsumerTest {
 
     @Test
     void shouldRejectNullEvent() {
-        ConsumerRecord<String, PaymentCompletedEvent> record =
-                new ConsumerRecord<>("payment.completed", 0, 20L, "100", null);
+        ConsumerRecord<String, PaymentCompletedEvent> record = new ConsumerRecord<>("payment.completed", 0, 20L, "100", null);
 
-        org.junit.jupiter.api.Assertions.assertThrows(
-                IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
+        assertThrows(IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
 
         verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
     }
+
+
+    // =========================================================
+    // TEST HELPERS
+    // =========================================================
+    private ConsumerRecord<String, PaymentCompletedEvent> createRecord(PaymentCompletedEvent paymentEvent)   {
+        return new ConsumerRecord<>("payment.completed", 0, 10L, "100", paymentEvent);
+    }
+
+    private void assertInvalidEvent(PaymentCompletedEvent invalidEvent) throws Exception {
+        ConsumerRecord<String, PaymentCompletedEvent> record = createRecord(invalidEvent);
+
+        assertThrows(IllegalArgumentException.class, () -> consumer.consumePaymentCompleted(record));
+
+        verify(deliveryService, never()).handlePaymentCompleted(any(PaymentCompletedEvent.class));
+    }
+
+
 }

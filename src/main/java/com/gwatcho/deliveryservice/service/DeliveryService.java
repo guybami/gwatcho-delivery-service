@@ -1,8 +1,10 @@
+
 package com.gwatcho.deliveryservice.service;
 
 import com.gwatcho.deliveryservice.entity.Delivery;
 import com.gwatcho.deliveryservice.entity.DeliveryStatus;
 import com.gwatcho.deliveryservice.event.DeliveryCompletedEvent;
+import com.gwatcho.deliveryservice.event.OrderCreatedEvent;
 import com.gwatcho.deliveryservice.event.PaymentCompletedEvent;
 import com.gwatcho.deliveryservice.kafka.DeliveryCompletedEventProducer;
 import com.gwatcho.deliveryservice.repository.DeliveryRepository;
@@ -21,16 +23,17 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class DeliveryService {
     private final DeliveryRepository deliveryRepository;
+    private final DeliveryCompletedEventProducer deliveryCompletedEventProducer;
 
     /*
-     * Payment events may arrive before the corresponding order information.
+     * Temporary correlation for the case where payment.completed arrives
+     * before order.created.
      *
-     * In that case we keep the payment temporarily in memory and wait for
-     * the order information before creating a persistent Delivery.
+     * IMPORTANT:
+     * This map is not durable. A production implementation should persist
+     * pending payment events so they survive service restarts.
      */
     private final Map<Long, PaymentCompletedEvent> pendingPayments = new ConcurrentHashMap<>();
-
-    private final DeliveryCompletedEventProducer deliveryCompletedEventProducer;
 
     public DeliveryService(
             DeliveryRepository deliveryRepository, DeliveryCompletedEventProducer deliveryCompletedEventProducer) {
@@ -39,20 +42,105 @@ public class DeliveryService {
     }
 
     // =========================================================
+    // ORDER.CREATED
+    // =========================================================
+
+    @Transactional
+    public Delivery handleOrderCreated(OrderCreatedEvent event) {
+        validateOrderCreatedEvent(event);
+
+        Long orderId = event.orderId();
+
+        log.info("Processing order.created: orderId={}, customerId={}", orderId, event.customerId());
+
+        Delivery delivery = deliveryRepository.findByOrderId(orderId).orElseGet(
+                () -> Delivery.builder().orderId(orderId).status(DeliveryStatus.CREATED).build());
+
+        boolean isNew = delivery.getId() == null;
+
+        // Populate order and delivery-address information.
+        delivery.setCustomerId(event.customerId());
+        delivery.setStreet(event.street());
+        delivery.setPostalCode(event.postalCode());
+        delivery.setCity(event.city());
+        delivery.setCountry(event.country());
+        delivery.setAmount(event.totalAmount());
+        delivery.setCurrency(event.currency());
+
+        if (delivery.getStatus() == null) {
+            delivery.setStatus(DeliveryStatus.CREATED);
+        }
+
+        /*
+         * If payment.completed arrived first, correlate it with this order.
+         * Remove it from the map only after the database save succeeds.
+         */
+        PaymentCompletedEvent pendingPayment = pendingPayments.get(orderId);
+
+        if (pendingPayment != null) {
+            applyPaymentInformation(delivery, pendingPayment);
+        }
+
+        Delivery saved = deliveryRepository.save(delivery);
+
+        if (pendingPayment != null) {
+            pendingPayments.remove(orderId, pendingPayment);
+
+            log.info("Pending payment correlated successfully: orderId={}, paymentId={}", saved.getOrderId(),
+                    saved.getPaymentId());
+        }
+
+        log.info("{} delivery for orderId={}: deliveryId={}, status={}", isNew ? "Created" : "Updated", saved.getOrderId(),
+                saved.getId(), saved.getStatus());
+
+        return saved;
+    }
+
+    private void validateOrderCreatedEvent(OrderCreatedEvent event) {
+        if (event == null) {
+            throw new IllegalArgumentException("OrderCreatedEvent must not be null");
+        }
+
+        if (event.orderId() == null) {
+            throw new IllegalArgumentException("OrderCreatedEvent orderId is required");
+        }
+
+        if (event.customerId() == null) {
+            throw new IllegalArgumentException("OrderCreatedEvent customerId is required");
+        }
+
+        if (event.totalAmount() == null) {
+            throw new IllegalArgumentException("OrderCreatedEvent totalAmount is required");
+        }
+
+        requireText(event.currency(), "currency");
+        requireText(event.street(), "street");
+        requireText(event.postalCode(), "postalCode");
+        requireText(event.city(), "city");
+        requireText(event.country(), "country");
+    }
+
+    private void requireText(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("OrderCreatedEvent " + fieldName + " is required");
+        }
+    }
+
+    // =========================================================
     // PAYMENT.COMPLETED
     // =========================================================
 
     @Transactional
     public Delivery handlePaymentCompleted(PaymentCompletedEvent event) {
-        log.info("Processing payment.completed: paymentId={}, orderId={}, customerId={}", event.paymentId(), event.orderId(),
-                event.customerId());
+        validatePaymentCompletedEvent(event);
+
+        log.info("Processing payment.completed: paymentId={}, orderId={}, customerId={}", event.paymentId(),
+                event.orderId(), event.customerId());
 
         Optional<Delivery> existingDelivery = deliveryRepository.findByOrderId(event.orderId());
 
         if (existingDelivery.isPresent()) {
             Delivery delivery = existingDelivery.get();
-
-            log.info("Delivery already exists: deliveryId={}, orderId={}", delivery.getId(), delivery.getOrderId());
 
             applyPaymentInformation(delivery, event);
 
@@ -62,16 +150,28 @@ public class DeliveryService {
 
             Delivery saved = deliveryRepository.save(delivery);
 
-            log.info("Payment information applied successfully: deliveryId={}, orderId={}, status={}", saved.getId(),
-                    saved.getOrderId(), saved.getStatus());
+            // A duplicate payment event must not leave stale pending data.
+            pendingPayments.remove(event.orderId());
+
+            log.info("Payment information applied successfully: deliveryId={}, orderId={}, paymentId={}", saved.getId(),
+                    saved.getOrderId(), saved.getPaymentId());
 
             return saved;
         }
 
+        /*
+         * Order information has not arrived yet.
+         * Keep the payment temporarily for correlation in handleOrderCreated().
+         */
         pendingPayments.put(event.orderId(), event);
 
-        log.info("No Delivery found for orderId={}. Payment stored as pending correlation.", event.orderId());
+        log.info("No delivery found for orderId={}. Payment stored as pending correlation.", event.orderId());
 
+        /*
+         * Return a transient object for compatibility with the existing method
+         * signature. This object is NOT persisted and must not be treated as
+         * an existing delivery.
+         */
         return Delivery.builder()
                 .orderId(event.orderId())
                 .customerId(event.customerId())
@@ -81,6 +181,37 @@ public class DeliveryService {
                 .transactionId(event.transactionId())
                 .status(DeliveryStatus.CREATED)
                 .build();
+    }
+
+    private void validatePaymentCompletedEvent(PaymentCompletedEvent event) {
+        if (event == null) {
+            throw new IllegalArgumentException("PaymentCompletedEvent must not be null");
+        }
+
+        if (event.paymentId() == null) {
+            throw new IllegalArgumentException("PaymentCompletedEvent paymentId is required");
+        }
+
+        if (event.orderId() == null) {
+            throw new IllegalArgumentException("PaymentCompletedEvent orderId is required");
+        }
+
+        if (event.customerId() == null) {
+            throw new IllegalArgumentException("PaymentCompletedEvent customerId is required");
+        }
+
+        if (event.amount() == null) {
+            throw new IllegalArgumentException("PaymentCompletedEvent amount is required");
+        }
+
+        requirePaymentText(event.currency(), "currency");
+        requirePaymentText(event.transactionId(), "transactionId");
+    }
+
+    private void requirePaymentText(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("PaymentCompletedEvent " + fieldName + " is required");
+        }
     }
 
     // =========================================================
@@ -93,22 +224,6 @@ public class DeliveryService {
         delivery.setAmount(event.amount());
         delivery.setCurrency(event.currency());
         delivery.setTransactionId(event.transactionId());
-    }
-
-    // =========================================================
-    // INFORMATION CHECKS
-    // =========================================================
-
-    private boolean hasOrderInformation(Delivery delivery) {
-        return delivery.getCustomerId() != null && delivery.getStreet() != null && !delivery.getStreet().isBlank()
-                && delivery.getPostalCode() != null && !delivery.getPostalCode().isBlank() && delivery.getCity() != null
-                && !delivery.getCity().isBlank() && delivery.getCountry() != null && !delivery.getCountry().isBlank();
-    }
-
-    private boolean hasPaymentInformation(Delivery delivery) {
-        return delivery.getPaymentId() != null && delivery.getAmount() != null && delivery.getCurrency() != null
-                && !delivery.getCurrency().isBlank() && delivery.getTransactionId() != null
-                && !delivery.getTransactionId().isBlank();
     }
 
     // =========================================================
@@ -132,9 +247,19 @@ public class DeliveryService {
     }
 
     // =========================================================
+    // FIND BY ORDER ID
+    // =========================================================
+
+    @Transactional(readOnly = true)
+    public Optional<Delivery> findByOrderId(Long orderId) {
+        return deliveryRepository.findByOrderId(orderId);
+    }
+
+    // =========================================================
     // UPDATE STATUS
     // =========================================================
 
+    @Transactional
     public Delivery updateStatus(Long deliveryId, DeliveryStatus newStatus) {
         Delivery delivery = deliveryRepository.findById(deliveryId)
                 .orElseThrow(() -> new IllegalArgumentException("Delivery not found: " + deliveryId));
@@ -152,7 +277,7 @@ public class DeliveryService {
         Delivery saved = deliveryRepository.save(delivery);
 
         log.info("Delivery status changed: deliveryId={}, orderId={}, {} -> {}", saved.getId(), saved.getOrderId(),
-                oldStatus, newStatus);
+                oldStatus, saved.getStatus());
 
         if (newStatus == DeliveryStatus.DELIVERED) {
             publishDeliveryCompleted(saved);
@@ -177,18 +302,14 @@ public class DeliveryService {
     }
 
     // =========================================================
-    // FIND BY ORDER ID
-    // =========================================================
-
-    public Optional<Delivery> findByOrderId(Long orderId) {
-        return deliveryRepository.findByOrderId(orderId);
-    }
-
-    // =========================================================
     // STATUS TRANSITIONS
     // =========================================================
 
     private void validateTransition(DeliveryStatus current, DeliveryStatus next) {
+        if (next == null) {
+            throw new IllegalArgumentException("New delivery status must not be null");
+        }
+
         if (current == next) {
             return;
         }
@@ -209,13 +330,10 @@ public class DeliveryService {
             case SHIPPED ->
                     next == DeliveryStatus.DELIVERED;
 
-            case DELIVERED,
-                 CANCELLED ->
-                    false;
+            case DELIVERED, CANCELLED -> false;
         };
 
         if (!valid) {
-
             throw new IllegalStateException(
                     "Invalid delivery status transition: "
                             + current
