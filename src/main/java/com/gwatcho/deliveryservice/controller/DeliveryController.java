@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import java.util.List;
 
 @RestController
 @RequestMapping("/deliveries")
@@ -34,6 +35,13 @@ public class DeliveryController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    @GetMapping("/all")
+    public ResponseEntity<List<Delivery>> getAllDeliveries() {
+        return ResponseEntity.ok(deliveryService.getAllDeliveries());
+    }
+
+
     public record UpdateDeliveryStatusRequest(@NotNull DeliveryStatus status) {}
+
 }
 

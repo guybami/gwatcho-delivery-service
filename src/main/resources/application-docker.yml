@@ -15,7 +15,7 @@ spring:
       acks: all
       retries: 10
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
       properties:
         spring.json.add.type.headers: false
@@ -72,6 +72,11 @@ app:
 
 logging:
   level:
+    root: INFO
+    com.gwatcho.deliveryservice: DEBUG
+    org.springframework.web: DEBUG
+    org.springframework.security: INFO
+    org.springframework.web.servlet.DispatcherServlet: DEBUG
     org.hibernate.SQL: OFF
     org.hibernate.orm.jdbc.bind: OFF
     org.hibernate.orm.jdbc.extract: OFF

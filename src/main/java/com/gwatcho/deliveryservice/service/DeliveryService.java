@@ -11,11 +11,13 @@ import com.gwatcho.deliveryservice.repository.DeliveryRepository;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,7 +46,6 @@ public class DeliveryService {
     // =========================================================
     // ORDER.CREATED
     // =========================================================
-
     @Transactional
     public Delivery handleOrderCreated(OrderCreatedEvent event) {
         validateOrderCreatedEvent(event);
@@ -127,9 +128,8 @@ public class DeliveryService {
     }
 
     // =========================================================
-    // PAYMENT.COMPLETED
+    // PAYMENT.COMPLETED events
     // =========================================================
-
     @Transactional
     public Delivery handlePaymentCompleted(PaymentCompletedEvent event) {
         validatePaymentCompletedEvent(event);
@@ -217,7 +217,6 @@ public class DeliveryService {
     // =========================================================
     // PAYMENT INFORMATION
     // =========================================================
-
     private void applyPaymentInformation(Delivery delivery, PaymentCompletedEvent event) {
         delivery.setPaymentId(event.paymentId());
         delivery.setCustomerId(event.customerId());
@@ -229,7 +228,6 @@ public class DeliveryService {
     // =========================================================
     // GET DELIVERY
     // =========================================================
-
     @Transactional(readOnly = true)
     public Delivery getDelivery(Long deliveryId) {
         return deliveryRepository.findById(deliveryId)
@@ -239,7 +237,6 @@ public class DeliveryService {
     // =========================================================
     // GET BY ORDER ID
     // =========================================================
-
     @Transactional(readOnly = true)
     public Delivery getByOrderId(Long orderId) {
         return deliveryRepository.findByOrderId(orderId).orElseThrow(
@@ -249,7 +246,6 @@ public class DeliveryService {
     // =========================================================
     // FIND BY ORDER ID
     // =========================================================
-
     @Transactional(readOnly = true)
     public Optional<Delivery> findByOrderId(Long orderId) {
         return deliveryRepository.findByOrderId(orderId);
@@ -258,24 +254,19 @@ public class DeliveryService {
     // =========================================================
     // UPDATE STATUS
     // =========================================================
-
     @Transactional
     public Delivery updateStatus(Long deliveryId, DeliveryStatus newStatus) {
         Delivery delivery = deliveryRepository.findById(deliveryId)
                 .orElseThrow(() -> new IllegalArgumentException("Delivery not found: " + deliveryId));
 
         DeliveryStatus oldStatus = delivery.getStatus();
-
         validateTransition(oldStatus, newStatus);
-
         delivery.setStatus(newStatus);
-
         if (newStatus == DeliveryStatus.DELIVERED) {
             delivery.setDeliveredAt(Instant.now());
         }
 
         Delivery saved = deliveryRepository.save(delivery);
-
         log.info("Delivery status changed: deliveryId={}, orderId={}, {} -> {}", saved.getId(), saved.getOrderId(),
                 oldStatus, saved.getStatus());
 
@@ -289,22 +280,18 @@ public class DeliveryService {
     // =========================================================
     // DELIVERY COMPLETED EVENT
     // =========================================================
-
     private void publishDeliveryCompleted(Delivery delivery) {
         LocalDateTime localTime = delivery.getDeliveredAt().atZone(ZoneId.systemDefault()).toLocalDateTime();
 
         DeliveryCompletedEvent event = new DeliveryCompletedEvent(UUID.randomUUID().toString(), "DeliveryCompleted",
                 delivery.getId(), delivery.getOrderId(), delivery.getCustomerId(), localTime);
-
         deliveryCompletedEventProducer.publish(event);
-
         log.info("delivery.completed published: deliveryId={}, orderId={}", delivery.getId(), delivery.getOrderId());
     }
 
     // =========================================================
     // STATUS TRANSITIONS
     // =========================================================
-
     private void validateTransition(DeliveryStatus current, DeliveryStatus next) {
         if (next == null) {
             throw new IllegalArgumentException("New delivery status must not be null");
@@ -340,5 +327,13 @@ public class DeliveryService {
                             + " -> "
                             + next);
         }
+    }
+
+    @Transactional(readOnly = true)
+    public List<Delivery> getAllDeliveries() {
+        return deliveryRepository.findAllByOrderByCreatedAtDesc();
+        /*return deliveryRepository.findAll(
+                Sort.by(Sort.Direction.DESC, "createdAt")
+        );*/
     }
 }

@@ -11,7 +11,7 @@ spring:
       acks: all
       retries: 10
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
       properties:
         spring.json.add.type.headers: false
